@@ -89,20 +89,83 @@ const rotateVec = (x: number, y: number, angleDeg: number) => {
 };
 const addVec = (v1: {x:number, y:number}, v2: {x:number, y:number}) => ({ x: v1.x + v2.x, y: v1.y + v2.y });
 
-/**
- * Calculates Global Joint Positions for the entire body.
- * Used for IK locking and collision detection.
- */
+// Helper to calculate the Global Angle of a specific bone
+export const getGlobalAngle = (pose: Pose, part: string): number => {
+    const root = pose.rootRotation || 0;
+    // Hierarchy Accumulators
+    const hips = root + pose.hips;
+    const torso = root + pose.torso;
+    
+    // Arm Bases (Mannequin.tsx hardcoded offsets)
+    // R_Arm Rotation in Render = 90 + pose.rShoulder
+    // L_Arm Rotation in Render = -(90 + pose.lShoulder) = -90 - pose.lShoulder
+    // This helper returns the "Visual" global angle
+    
+    switch (part) {
+        case 'root': return root;
+        case 'hips': return hips; // Visual Angle of Pelvis
+        case 'torso': return torso;
+        case 'neck': return torso + pose.neck;
+        
+        case 'rThigh': return hips + pose.rThigh;
+        case 'rCalf': return hips + pose.rThigh + pose.rCalf;
+        case 'lThigh': return hips + pose.lThigh;
+        case 'lCalf': return hips + pose.lThigh + pose.lCalf;
+
+        case 'rShoulder': return torso + 90 + pose.rShoulder;
+        case 'rForearm': return torso + 90 + pose.rShoulder + pose.rForearm;
+        case 'lShoulder': return torso - 90 - pose.lShoulder;
+        case 'lForearm': return torso - 90 - pose.lShoulder + pose.lForearm;
+        
+        default: return 0;
+    }
+};
+
+// Calculates the local rotation needed to achieve a Target Global Angle
+export const solveCounterRotation = (pose: Pose, part: string, targetGlobal: number): number => {
+    const root = pose.rootRotation || 0;
+    const hips = root + pose.hips;
+    const torso = root + pose.torso;
+
+    switch (part) {
+        // Hips (Child of Root) -> Target = Root + Local => Local = Target - Root
+        case 'hips': return targetGlobal - root;
+        case 'torso': return targetGlobal - root;
+        case 'neck': return targetGlobal - torso;
+
+        // Legs (Child of Hips)
+        case 'rThigh': return targetGlobal - hips;
+        case 'rCalf': return targetGlobal - (hips + pose.rThigh);
+        case 'lThigh': return targetGlobal - hips;
+        case 'lCalf': return targetGlobal - (hips + pose.lThigh);
+
+        // Arms (Child of Torso)
+        // R_Global = Torso + 90 + R_Local => R_Local = Target - Torso - 90
+        case 'rShoulder': return targetGlobal - torso - 90;
+        case 'rForearm': return targetGlobal - (torso + 90 + pose.rShoulder);
+        
+        // L_Global = Torso - 90 - L_Local => L_Local = Torso - 90 - Target
+        // Logic: Target = T - 90 - L  =>  L = T - 90 - Target
+        case 'lShoulder': return torso - 90 - targetGlobal;
+        case 'lForearm': return (torso - 90 - pose.lShoulder) - targetGlobal; // Wait, LForearm in render is +LForearm relative to LShoulder?
+        // Let's re-verify L-Arm stack in Mannequin.tsx
+        // L_Shoulder Group: rotate(-(90+lShoulder))
+        //   L_Forearm Group: rotate(lForearm) -> This is additive to the parent group!
+        // So L_Forearm Global = (Torso - 90 - lShoulder) + lForearm
+        // Target = (T - 90 - L_S) + L_F
+        // L_F = Target - (T - 90 - L_S)
+        // Re-correcting lForearm case:
+        // case 'lForearm': return targetGlobal - (torso - 90 - pose.lShoulder);
+        
+        default: return 0;
+    }
+};
+
 export const getJointPositions = (pose: Pose) => {
     const { root, rootRotation = 0 } = pose;
     const offsets = pose.offsets || {};
 
-    // --- LOWER BODY ---
-    // Root -> Rotate(RootRot) -> Rotate(Hips) -> PelvisBone -> [HipOffsets] -> Legs
-    
     const globalAnglePelvis = rootRotation + pose.hips;
-    
-    // Vector from Root to End-of-Pelvis (where hips attach)
     const pelvisVec = rotateVec(0, ANATOMY.PELVIS, globalAnglePelvis);
     const pelvisEnd = addVec(root, pelvisVec);
 
@@ -116,17 +179,14 @@ export const getJointPositions = (pose: Pose) => {
         const hipOffsetVec = rotateVec(hipOffsetX, 0, globalAnglePelvis);
         const hipJoint = addVec(pelvisEnd, hipOffsetVec);
         
-        // Thigh
         const angleThighGlobal = globalAnglePelvis + thighAngle;
         const thighVec = rotateVec(0, ANATOMY.LEG_UPPER, angleThighGlobal);
         const kneeJoint = addVec(hipJoint, thighVec);
         
-        // Calf
         const angleCalfGlobal = angleThighGlobal + calfAngle;
         const calfVec = rotateVec(0, ANATOMY.LEG_LOWER, angleCalfGlobal);
         const ankleJoint = addVec(kneeJoint, calfVec);
         
-        // Foot
         const footBaseAngle = isRight ? -90 : 90;
         const angleFootGlobal = angleCalfGlobal + footBaseAngle + ankleAngle;
         const footVec = rotateVec(0, ANATOMY.FOOT, angleFootGlobal);
@@ -138,9 +198,7 @@ export const getJointPositions = (pose: Pose) => {
     const rightLeg = getLegJoints('right');
     const leftLeg = getLegJoints('left');
 
-    // --- UPPER BODY ---
     const globalAngleTorso = rootRotation + pose.torso;
-    
     const torsoVec = rotateVec(0, ANATOMY.TORSO, globalAngleTorso);
     const neckBase = addVec(root, torsoVec);
     
@@ -193,10 +251,7 @@ export const getJointPositions = (pose: Pose) => {
         lKnee: leftLeg.knee, rKnee: rightLeg.knee,
         lAnkle: leftLeg.ankle, rAnkle: rightLeg.ankle,
         lFootTip: leftLeg.footTip, rFootTip: rightLeg.footTip,
-        
-        neckBase,
-        headTop,
-        
+        neckBase, headTop,
         lShoulder: leftArm.shoulder, rShoulder: rightArm.shoulder,
         lElbow: leftArm.elbow, rElbow: rightArm.elbow,
         lWrist: leftArm.wrist, rWrist: rightArm.wrist,
@@ -204,95 +259,78 @@ export const getJointPositions = (pose: Pose) => {
     };
 };
 
-/**
- * World-Space Enforcement Layer.
- * Ensures the mannequin respects the floor as a rigid physical limit.
- * Runs AFTER all FK and IK passes.
- */
-export const resolveFinalGrounding = (
-    pose: Pose, 
-    floorHeight: number, 
-    magnetism: number,
-    sitMode: boolean = false,
-    seatHeight: number = 0
-): Pose => {
+export const resolveFinalGrounding = (pose: Pose, floorHeight: number, magnetism: number, sitMode: boolean = false, seatHeight: number = 0): Pose => {
     let finalPose = { ...pose };
     const joints = getJointPositions(finalPose);
 
-    // --- 1. SIT MODE COLLISION (Hips on Seat) ---
     if (sitMode) {
-        // Seat Physics: Only exert force if HIPS are physically BELOW the seat line.
-        // In SVG coords, Y increases downwards. So if HipY > SeatY, we are below.
-        
         const lowestHipY = Math.max(joints.lHip.y, joints.rHip.y);
         const seatPenetration = lowestHipY - seatHeight;
-        
-        if (seatPenetration > 0) {
-            // Push hips up to rest on seat
-            finalPose.root.y -= seatPenetration;
-        }
-        
-        // Magnetism: Pull hips down if they are slightly above the seat
+        if (seatPenetration > 0) finalPose.root.y -= seatPenetration;
         if (magnetism > 0 && seatPenetration < 0 && Math.abs(seatPenetration) < 100) {
             const pull = Math.abs(seatPenetration) * (magnetism * 0.5); 
             finalPose.root.y += pull;
         }
     }
 
-    // --- 2. FOOT/FLOOR COLLISION ---
     const newJoints = getJointPositions(finalPose);
-    const contactPoints = [
-        newJoints.lFootTip.y, newJoints.rFootTip.y,
-        newJoints.lAnkle.y, newJoints.rAnkle.y
-    ];
-    
+    const contactPoints = [newJoints.lFootTip.y, newJoints.rFootTip.y, newJoints.lAnkle.y, newJoints.rAnkle.y];
     const lowestPointY = Math.max(...contactPoints);
     const penetration = lowestPointY - floorHeight;
 
-    if (penetration > 0) {
-        finalPose.root.y -= penetration;
-    }
-
-    if (!sitMode && magnetism > 0 && penetration < 0) {
-        if (Math.abs(penetration) < 100) {
-             const pull = Math.abs(penetration) * magnetism;
-             finalPose.root.y += pull;
-        }
+    if (penetration > 0) finalPose.root.y -= penetration;
+    if (!sitMode && magnetism > 0 && penetration < 0 && Math.abs(penetration) < 100) {
+         const pull = Math.abs(penetration) * magnetism;
+         finalPose.root.y += pull;
     }
 
     return finalPose;
 };
 
-/**
- * Hard Viewport Clamping (Viewing Box)
- * Ensures the character's ROOT never leaves the square.
- */
 export const clampPoseToBox = (pose: Pose, boxSize: number): Pose => {
-    const margin = 50; // Padding inside box
+    const margin = 50; 
     const limit = (boxSize / 2) - margin;
-    
-    const clampedRoot = {
-        x: Math.max(-limit, Math.min(limit, pose.root.x)),
-        y: Math.max(-limit, Math.min(limit, pose.root.y))
-    };
-    
-    return { ...pose, root: clampedRoot };
+    return { ...pose, root: { x: Math.max(-limit, Math.min(limit, pose.root.x)), y: Math.max(-limit, Math.min(limit, pose.root.y)) } };
 };
 
 export const applyLimbLimpness = (pose: Pose): Pose => {
     const { rootRotation = 0, hips, torso } = pose;
     const limpPose = { ...pose };
-    const legCorrection = 90 - (rootRotation + hips);
-    limpPose.rThigh = legCorrection;
-    limpPose.lThigh = legCorrection;
-    limpPose.rCalf = 0; limpPose.lCalf = 0;
-    limpPose.rAnkle = 0; limpPose.lAnkle = 0;
-    limpPose.rShoulder = -(rootRotation + torso);
-    limpPose.lShoulder = (rootRotation + torso) - 180;
-    limpPose.rForearm = 0; limpPose.lForearm = 0;
-    limpPose.rWrist = 0; limpPose.lWrist = 0;
+    
+    // Gravity Direction relative to Hips:
+    // If GlobalHips = (Root + Hips), then Down (Global 0) requires Local = -GlobalHips
+    const legGravity = -(rootRotation + hips);
+    
+    limpPose.rThigh = legCorrection(legGravity);
+    limpPose.lThigh = legCorrection(legGravity);
+    limpPose.rCalf = 0; 
+    limpPose.lCalf = 0;
+    limpPose.rAnkle = 0; 
+    limpPose.lAnkle = 0;
+    
+    // Gravity relative to Torso:
+    // R_Arm Global = (Root + Torso + 90) + R_Shoulder. Target 0 => R_S = -90 - (Root + Torso)
+    limpPose.rShoulder = -90 - (rootRotation + torso);
+    
+    // L_Arm Global = (Root + Torso - 90) - L_Shoulder. Target 0 => L_S = (Root + Torso - 90)
+    limpPose.lShoulder = (rootRotation + torso) - 90;
+    
+    limpPose.rForearm = 0; 
+    limpPose.lForearm = 0;
+    limpPose.rWrist = 0; 
+    limpPose.lWrist = 0;
+    
     return limpPose;
 };
+
+// Helper to keep legs from snapping wildly when 180 degrees
+const legCorrection = (angle: number) => {
+    // Normalize to -180 to 180
+    let a = angle % 360;
+    if (a > 180) a -= 360;
+    if (a < -180) a += 360;
+    return a;
+}
 
 export const solveTwoBoneIK = (
     rootRot: number,

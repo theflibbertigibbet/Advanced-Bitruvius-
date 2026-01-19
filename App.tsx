@@ -18,7 +18,9 @@ import {
     applyLimbLimpness, 
     resolveFinalGrounding, 
     clampPoseToBox, 
-    getMaxPoseDeviation 
+    getMaxPoseDeviation,
+    getGlobalAngle,
+    solveCounterRotation
 } from './utils/kinematics';
 
 // --- DOMAIN TYPES ---
@@ -125,6 +127,7 @@ const App = () => {
   const [tensionAlerts, setTensionAlerts] = useState<string[]>([]);
   const [auditMode, setAuditMode] = useState(false);
   const [pinnedJoints, setPinnedJoints] = useState<Map<string, {x: number, y: number}>>(new Map());
+  const [balanceTargets, setBalanceTargets] = useState<Map<string, number>>(new Map()); // <BoneName, TargetGlobalAngle>
   
   // 6. REFS (MUTABLE BRIDGES)
   const svgRef = useRef<SVGSVGElement>(null);
@@ -154,18 +157,84 @@ const App = () => {
           ? interpolatePose(frames[currentFrameIndex], frames[(currentFrameIndex + 1) % frames.length], 0.5) 
           : frames[currentFrameIndex];
       
+      let final = raw;
+
+      // 1. TENSION BLENDING (Only applies if NOT dragging)
       if (tension < 100 && !dragTarget) {
-          const relaxed = applyLimbLimpness(raw);
+          const relaxed = applyLimbLimpness(final);
           const t = tension / 100;
-          const blended: any = { ...raw };
+          const blended: any = { ...final };
           ['lShoulder', 'rShoulder', 'lThigh', 'rThigh', 'lForearm', 'rForearm', 'lCalf', 'rCalf'].forEach(key => {
-             // @ts-ignore
-             blended[key] = lerp(relaxed[key], raw[key], t);
+             // If balanced, do not apply tension relaxation (Balance overrides limpness)
+             if (!balanceTargets.has(key)) {
+                 // @ts-ignore
+                 blended[key] = lerp(relaxed[key], final[key], t);
+             }
           });
-          return blended as Pose;
+          final = blended as Pose;
       }
-      return raw;
-  }, [frames, currentFrameIndex, isPlaying, isTweening, tension, dragTarget]);
+
+      // 2. BALANCE (Visual Stabilizer)
+      // Forces specific bones to maintain their target global angle regardless of parent rotation
+      if (balanceTargets.size > 0) {
+          const balanced = { ...final };
+          balanceTargets.forEach((targetGlobalAngle, boneKey) => {
+              // Calculate required local rotation to hit target
+              const counterRot = solveCounterRotation(balanced, boneKey, targetGlobalAngle);
+              // @ts-ignore
+              balanced[boneKey] = counterRot;
+          });
+          final = balanced;
+      }
+
+      // 3. JUMP CHARGE VISUALIZATION (CROUCH)
+      if (jumpMode && jumpCharge > 0 && jumpPhase === 'idle') {
+          // Calculate squat depth based on charge (Max 120px)
+          const squatDepth = (jumpCharge / 100) * 120;
+          const crouched = { ...final };
+          
+          // Lower Hips
+          crouched.root = { ...crouched.root, y: crouched.root.y + squatDepth };
+          
+          // Solve IK for legs to keep feet anchored at original positions
+          const j = getJointPositions(final); // Get original positions
+          const solveLeg = (isRight: boolean) => {
+              const hipOffset = isRight ? ANATOMY.HIP_WIDTH/4 : -ANATOMY.HIP_WIDTH/4;
+              // New Hip Position (Approximation relative to root)
+              const newHip = { 
+                  x: crouched.root.x + hipOffset, 
+                  y: crouched.root.y + ANATOMY.PELVIS 
+              };
+              const ankleTarget = isRight ? j.rAnkle : j.lAnkle;
+              
+              const res = solveTwoBoneIK(
+                  crouched.rootRotation || 0,
+                  crouched.hips,
+                  newHip,
+                  ankleTarget,
+                  ANATOMY.LEG_UPPER,
+                  ANATOMY.LEG_LOWER,
+                  1 // Knees forward
+              );
+              
+              if (isRight) {
+                  crouched.rThigh = res.thigh;
+                  crouched.rCalf = res.calf;
+                  crouched.rAnkle = -(crouched.rootRotation||0) - (crouched.hips) - res.thigh - res.calf - (-90);
+              } else {
+                  crouched.lThigh = res.thigh;
+                  crouched.lCalf = res.calf;
+                  crouched.lAnkle = -(crouched.rootRotation||0) - (crouched.hips) - res.thigh - res.calf - (90);
+              }
+          };
+
+          solveLeg(true);
+          solveLeg(false);
+          final = crouched;
+      }
+      
+      return final;
+  }, [frames, currentFrameIndex, isPlaying, isTweening, tension, dragTarget, jumpMode, jumpCharge, jumpPhase, balanceTargets]);
 
   // --- HELPERS ---
   const recordHistory = useCallback(() => { 
@@ -186,6 +255,21 @@ const App = () => {
         if (next) { setSitMode(false); setIsGrounded(true); }
     }
   };
+  
+  const handleBalanceToggle = (key: string) => {
+      setBalanceTargets(prev => {
+          const next = new Map(prev);
+          if (next.has(key)) {
+              next.delete(key);
+          } else {
+              // Capture Current Global Angle to Lock
+              // Use displayPose (current visual state) as the source of truth
+              const currentGlobal = getGlobalAngle(displayPose, key);
+              next.set(key, currentGlobal);
+          }
+          return next;
+      });
+  };
 
   const handleTestModeChange = (mode: TestMode) => {
       if (testMode === 'CHAOS' && mode !== 'CHAOS') { setIsRecording(false); handleExportSequence(); }
@@ -199,6 +283,7 @@ const App = () => {
       setSitMode(false); setJumpMode(false); setJumpPhase('idle');
       setIsGrounded(true); setWaistMode('STATIC'); setHulaMomentum(false);
       setStancePinLeft(false); setStancePinRight(false); setPinnedJoints(new Map());
+      setBalanceTargets(new Map());
       setIsPlaying(false); chaosLogs.current = [];
       recordHistory();
       setFrames(prev => { const n = [...prev]; n[currentFrameIndex] = { ...DEFAULT_POSE }; return n; });
@@ -614,6 +699,7 @@ const App = () => {
             isGrounded={isGrounded} onToggleGrounded={() => handlePhysicsToggle('FLOOR')} gravity={gravity} onToggleGravity={() => setGravity(!gravity)} floorMagnetism={floorMagnetism} setFloorMagnetism={setFloorMagnetism} sitMode={sitMode} setSitMode={() => handlePhysicsToggle('SIT')} seatHeight={seatHeight} setSeatHeight={(v) => { setSeatHeight(v); handlePoseChange({}); }} tension={tension} setTension={setTension}
             conflicts={conflicts} auditMode={auditMode} setAuditMode={setAuditMode} tensionAlerts={tensionAlerts}
             systemErrors={systemErrors} focusMode={focusMode} setFocusMode={setFocusMode} onHoverControl={setGhostParam}
+            balanceTargets={balanceTargets} onToggleBalance={handleBalanceToggle}
           />
       )}
     </div>
