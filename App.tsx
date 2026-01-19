@@ -638,50 +638,54 @@ const App = () => {
     
     if (getMaxPoseDeviation(prev, candidate) > 50 && !manualControl) console.warn("Delta Limit");
 
-    // === RIGID GROUNDING & PIN ENFORCEMENT ===
-    // If we are grounded and not performing a jump/sit action, ensure feet adhere to pins
-    if (pinnedJoints.size > 0 && !jumpMode && !sitMode && !hulaMomentum) {
-        // Calculate the hypothetical joints based on the new FK inputs (root/hips/sliders)
-        const j = getJointPositions(candidate);
+    // Helper: Pin Enforcer
+    // Applies Two-Bone IK to force feet (or hands) to pinned locations
+    const applyPinConstraints = (p: Pose) => {
+        if (!pinnedJoints.size) return p;
+        // The core requirement: Hard Coded EXCEPT jumping/sitting/hula
+        if (jumpMode || sitMode || hulaMomentum) return p;
+
+        const next = { ...p };
+        const j = getJointPositions(next);
         
-        // Helper to solve IK for a specific pin
-        const enforcePin = (key: string, isRight: boolean) => {
+        const solve = (key: string, isRight: boolean) => {
              const pin = pinnedJoints.get(key);
              if (!pin) return;
              
-             const hip = isRight ? j.rHip : j.lHip; // Uses the updated hip position
+             const hip = isRight ? j.rHip : j.lHip; // Current Hip Pos
              const res = solveTwoBoneIK(
-                 candidate.rootRotation || 0,
-                 candidate.hips,
+                 next.rootRotation || 0,
+                 next.hips,
                  hip,
                  pin,
                  ANATOMY.LEG_UPPER,
                  ANATOMY.LEG_LOWER,
-                 1, // Default forward knee bend
+                 1, // Bend Direction
                  tension
              );
              
              if (isRight) {
-                 candidate.rThigh = res.thigh;
-                 candidate.rCalf = res.calf;
-                 // Auto-flatten foot if on ground to prevent awkward angles
+                 next.rThigh = res.thigh;
+                 next.rCalf = res.calf;
                  if (isGrounded && Math.abs(pin.y - FLOOR_HEIGHT) < 10) {
-                     const globalLeg = (candidate.rootRotation||0) + candidate.hips + res.thigh + res.calf;
-                     candidate.rAnkle = 90 - globalLeg;
+                     const globalLeg = (next.rootRotation||0) + next.hips + res.thigh + res.calf;
+                     next.rAnkle = 90 - globalLeg;
                  }
              } else {
-                 candidate.lThigh = res.thigh;
-                 candidate.lCalf = res.calf;
+                 next.lThigh = res.thigh;
+                 next.lCalf = res.calf;
                  if (isGrounded && Math.abs(pin.y - FLOOR_HEIGHT) < 10) {
-                     const globalLeg = (candidate.rootRotation||0) + candidate.hips + res.thigh + res.calf;
-                     candidate.lAnkle = -90 - globalLeg;
+                     const globalLeg = (next.rootRotation||0) + next.hips + res.thigh + res.calf;
+                     next.lAnkle = -90 - globalLeg;
                  }
              }
         };
 
-        if (stancePinLeft && pinnedJoints.has('lFoot')) enforcePin('lFoot', false);
-        if (stancePinRight && pinnedJoints.has('rFoot')) enforcePin('rFoot', true);
-    }
+        if (stancePinLeft && pinnedJoints.has('lFoot')) solve('lFoot', false);
+        if (stancePinRight && pinnedJoints.has('rFoot')) solve('rFoot', true);
+        
+        return next;
+    };
 
     if (sitMode && !jumpMode) {
         candidate.root.y = seatHeight - ANATOMY.PELVIS;
@@ -696,8 +700,27 @@ const App = () => {
         candidate.rThigh = rr.thigh; candidate.rCalf = rr.calf; candidate.rAnkle = rr.ankle;
         candidate.lThigh = lr.thigh; candidate.lCalf = lr.calf; candidate.lAnkle = lr.ankle;
     }
-    else if (isGrounded && !jumpMode) {
-        candidate = resolveFinalGrounding(candidate, FLOOR_HEIGHT, floorMagnetism/100, false, 0); 
+    else {
+        // === RIGID GROUNDING PIPELINE ===
+        
+        // Pass 1: Apply IK to User Input
+        // If user moved root/hips, this ensures feet attempt to stay at pins relative to new body
+        candidate = applyPinConstraints(candidate);
+        
+        if (isGrounded && !jumpMode) {
+            // Pass 2: Resolve Collision/Magnetism
+            // This might move the root up (collision) or down (magnetism)
+            const grounded = resolveFinalGrounding(candidate, FLOOR_HEIGHT, floorMagnetism/100, false, 0); 
+            
+            // Pass 3: Re-Apply IK
+            // If Pass 2 moved the root, we must re-solve legs to keep feet pinned.
+            // If we don't, feet will drift with the root movement.
+            if (grounded.root.y !== candidate.root.y || grounded.root.x !== candidate.root.x) {
+                candidate = applyPinConstraints(grounded);
+            } else {
+                candidate = grounded;
+            }
+        }
     }
 
     candidate = clampPoseToBox(candidate, 1200);
