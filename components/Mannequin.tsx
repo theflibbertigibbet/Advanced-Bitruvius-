@@ -15,6 +15,7 @@ interface MannequinProps {
   selectedPart?: string | null;
   pinnedJoints?: Map<string, {x: number, y: number}>;
   className?: string; // New prop for styling (e.g. shadow color)
+  isGrounded?: boolean; // Controls automatic foot leveling
 }
 
 export const Mannequin: React.FC<MannequinProps> = ({ 
@@ -26,7 +27,8 @@ export const Mannequin: React.FC<MannequinProps> = ({
     hoveredPart,
     selectedPart,
     pinnedJoints,
-    className = "text-ink"
+    className = "text-ink",
+    isGrounded = false
 }) => {
   // --- RIGGING CONSTANTS ---
   const shoulderInset = RIGGING.SHOULDER_INSET; 
@@ -57,6 +59,14 @@ export const Mannequin: React.FC<MannequinProps> = ({
   const rHipX = ANATOMY.HIP_WIDTH/4;
   const lHipX = -ANATOMY.HIP_WIDTH/4;
   const hipY = 0; // Attach directly to the bottom of the Pelvis bone
+
+  // --- FOOT ROTATION CORRECTION ---
+  // Calculates global limb angles to keep feet flat on floor when grounded
+  // SQ.8 FIX: Added rootRotation to ensure feet stay flat even if body is tilted at root
+  const globalCalfR = (pose.rootRotation || 0) + (pose.hips || 0) + (pose.rThigh || 0) + (pose.rCalf || 0);
+  const globalCalfL = (pose.rootRotation || 0) + (pose.hips || 0) + (pose.lThigh || 0) + (pose.lCalf || 0);
+  const rAnkleRot = isGrounded ? -globalCalfR : (pose.rAnkle || 0);
+  const lAnkleRot = isGrounded ? -globalCalfL : (pose.lAnkle || 0);
 
   // --- MASKING LOGIC ---
   const getStyle = (group: 'core' | 'upper' | 'lower' | 'l_arm' | 'r_arm' | 'l_leg' | 'r_leg') => {
@@ -178,9 +188,9 @@ export const Mannequin: React.FC<MannequinProps> = ({
             {/* RIGHT LEG */}
             <g transform={`translate(${rHipX}, ${hipY})`} style={getStyle('r_leg')}>
               {renderRangeArc('rFoot', ANATOMY.LEG_UPPER + ANATOMY.LEG_LOWER + ANATOMY.FOOT)}
-              <Bone rotation={pose.rThigh} corrective={pose.rThighCorrective} length={ANATOMY.LEG_UPPER} width={ANATOMY.LIMB_WIDTH_THIGH} variant="diamond" showOverlay={showOverlay} visible={isVisible('rThigh')} offset={offsets.rThigh}>
+              <Bone rotation={pose.rThigh} corrective={pose.rThighCorrective} length={ANATOMY.LEG_UPPER} stretch={pose.rLegStretch} width={ANATOMY.LIMB_WIDTH_THIGH} variant="diamond" showOverlay={showOverlay} visible={isVisible('rThigh')} offset={offsets.rThigh}>
                    <Bone rotation={pose.rCalf} length={ANATOMY.LEG_LOWER} width={ANATOMY.LIMB_WIDTH_CALF} variant="diamond" showOverlay={showOverlay} visible={isVisible('rCalf')} offset={offsets.rCalf}>
-                        <Bone rotation={-90 + pose.rAnkle} length={ANATOMY.FOOT} width={ANATOMY.EFFECTOR_WIDTH} variant="arrowhead" showOverlay={showOverlay} visible={isVisible('rAnkle')} offset={offsets.rAnkle}>
+                        <Bone rotation={-90 + rAnkleRot} length={ANATOMY.FOOT} width={ANATOMY.EFFECTOR_WIDTH} variant="arrowhead" showOverlay={showOverlay} visible={isVisible('rAnkle')} offset={offsets.rAnkle}>
                             <g transform={`translate(0, ${ANATOMY.FOOT})`}>{renderTargetIndicator('rFoot')}</g>
                         </Bone>
                    </Bone>
@@ -190,9 +200,9 @@ export const Mannequin: React.FC<MannequinProps> = ({
              {/* LEFT LEG */}
              <g transform={`translate(${lHipX}, ${hipY})`} style={getStyle('l_leg')}>
               {renderRangeArc('lFoot', ANATOMY.LEG_UPPER + ANATOMY.LEG_LOWER + ANATOMY.FOOT)}
-              <Bone rotation={pose.lThigh} corrective={pose.lThighCorrective} length={ANATOMY.LEG_UPPER} width={ANATOMY.LIMB_WIDTH_THIGH} variant="diamond" showOverlay={showOverlay} visible={isVisible('lThigh')} offset={offsets.lThigh}>
+              <Bone rotation={pose.lThigh} corrective={pose.lThighCorrective} length={ANATOMY.LEG_UPPER} stretch={pose.lLegStretch} width={ANATOMY.LIMB_WIDTH_THIGH} variant="diamond" showOverlay={showOverlay} visible={isVisible('lThigh')} offset={offsets.lThigh}>
                    <Bone rotation={pose.lCalf} length={ANATOMY.LEG_LOWER} width={ANATOMY.LIMB_WIDTH_CALF} variant="diamond" showOverlay={showOverlay} visible={isVisible('lThigh')} offset={offsets.lThigh}>
-                        <Bone rotation={90 + pose.lAnkle} length={ANATOMY.FOOT} width={ANATOMY.EFFECTOR_WIDTH} variant="arrowhead" showOverlay={showOverlay} visible={isVisible('lAnkle')} offset={offsets.lAnkle}>
+                        <Bone rotation={90 + lAnkleRot} length={ANATOMY.FOOT} width={ANATOMY.EFFECTOR_WIDTH} variant="arrowhead" showOverlay={showOverlay} visible={isVisible('lAnkle')} offset={offsets.lAnkle}>
                             <g transform={`translate(0, ${ANATOMY.FOOT})`}>{renderTargetIndicator('lFoot')}</g>
                         </Bone>
                    </Bone>

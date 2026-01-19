@@ -79,7 +79,7 @@ const JumpGhost = ({ pose, jumpHeight }: { pose: Pose, jumpHeight: number }) => 
     );
 };
 
-const CastShadow = ({ pose, skew }: { pose: Pose, skew: boolean }) => {
+const CastShadow = ({ pose, skew, isGrounded }: { pose: Pose, skew: boolean, isGrounded: boolean }) => {
     return (
         <g 
             transform={`translate(0, ${FLOOR_HEIGHT}) scale(1.333) ${skew ? 'skewX(20)' : ''} translate(0, -${FLOOR_HEIGHT})`} 
@@ -87,7 +87,7 @@ const CastShadow = ({ pose, skew }: { pose: Pose, skew: boolean }) => {
             style={{ filter: 'grayscale(100%) blur(1px)' }}
             className="pointer-events-none"
         >
-             <Mannequin pose={pose} showOverlay={false} className="text-ink" />
+             <Mannequin pose={pose} showOverlay={false} className="text-ink" isGrounded={isGrounded} />
         </g>
     );
 };
@@ -504,7 +504,8 @@ const App = () => {
                     if (key.includes('Foot')) {
                         const isR = key === 'rFoot';
                         const res = solveTwoBoneIK(nextPose.rootRotation||0, nextPose.hips, isR?j.rHip:j.lHip, tgt, ANATOMY.LEG_UPPER, ANATOMY.LEG_LOWER, 1, tension);
-                        if (isR) { nextPose.rThigh = res.thigh; nextPose.rCalf = res.calf; } else { nextPose.lThigh = res.thigh; nextPose.lCalf = res.calf; }
+                        if (isR) { nextPose.rThigh = res.thigh; nextPose.rCalf = res.calf; nextPose.rLegStretch = res.stretch; } 
+                        else { nextPose.lThigh = res.thigh; nextPose.lCalf = res.calf; nextPose.lLegStretch = res.stretch; }
                     } else if (key.includes('Hand')) {
                         const isR = key === 'rHand';
                         const cr = (nextPose.rootRotation||0) + nextPose.torso;
@@ -576,12 +577,14 @@ const App = () => {
                  
                  const j = getJointPositions(next); 
                  const pivotRes = solveTwoBoneIK(next.rootRotation||0, next.hips, isLeaningLeft ? j.lHip : j.rHip, activePivot, ANATOMY.LEG_UPPER, ANATOMY.LEG_LOWER, 1);
-                 if (isLeaningLeft) { next.lThigh = pivotRes.thigh; next.lCalf = pivotRes.calf; } else { next.rThigh = pivotRes.thigh; next.rCalf = pivotRes.calf; }
+                 if (isLeaningLeft) { next.lThigh = pivotRes.thigh; next.lCalf = pivotRes.calf; next.lLegStretch = pivotRes.stretch; } 
+                 else { next.rThigh = pivotRes.thigh; next.rCalf = pivotRes.calf; next.rLegStretch = pivotRes.stretch; }
                  
                  const liftHeight = Math.max(0, (Math.abs(sine) * p.hulaAmplitude) - 20); 
                  const passiveFootPos = { x: passiveTarget.x + (swayX * 0.2), y: FLOOR_HEIGHT - liftHeight }; 
                  const passiveRes = solveTwoBoneIK(next.rootRotation||0, next.hips, isLeaningLeft ? j.rHip : j.lHip, passiveFootPos, ANATOMY.LEG_UPPER, ANATOMY.LEG_LOWER, 1);
-                 if (isLeaningLeft) { next.rThigh = passiveRes.thigh; next.rCalf = passiveRes.calf; next.rAnkle = 20 + (sine * 10); } else { next.lThigh = passiveRes.thigh; next.lCalf = passiveRes.calf; next.lAnkle = 20 + (sine * 10); }
+                 if (isLeaningLeft) { next.rThigh = passiveRes.thigh; next.rCalf = passiveRes.calf; next.rAnkle = 20 + (sine * 10); next.rLegStretch = passiveRes.stretch; } 
+                 else { next.lThigh = passiveRes.thigh; next.lCalf = passiveRes.calf; next.lAnkle = 20 + (sine * 10); next.lLegStretch = passiveRes.stretch; }
                  
                  updated[currentFrameIndex] = clampPoseToBox(next, 1200);
                  return updated;
@@ -619,6 +622,7 @@ const App = () => {
                  const lr = solveTwoBoneIK(land.rootRotation||0, land.hips, j.lHip, lf, ANATOMY.LEG_UPPER, ANATOMY.LEG_LOWER, 1); 
                  const rr = solveTwoBoneIK(land.rootRotation||0, land.hips, j.rHip, rf, ANATOMY.LEG_UPPER, ANATOMY.LEG_LOWER, 1);
                  land.lThigh = lr.thigh; land.lCalf = lr.calf; land.rThigh = rr.thigh; land.rCalf = rr.calf;
+                 land.lLegStretch = lr.stretch; land.rLegStretch = rr.stretch;
                  updated[currentFrameIndex] = clampPoseToBox(land, 1200);
                  return updated;
             }
@@ -667,6 +671,7 @@ const App = () => {
              if (isRight) {
                  next.rThigh = res.thigh;
                  next.rCalf = res.calf;
+                 next.rLegStretch = res.stretch; // Store elastic stretch
                  if (isGrounded && Math.abs(pin.y - FLOOR_HEIGHT) < 10) {
                      const globalLeg = (next.rootRotation||0) + next.hips + res.thigh + res.calf;
                      next.rAnkle = 90 - globalLeg;
@@ -674,6 +679,7 @@ const App = () => {
              } else {
                  next.lThigh = res.thigh;
                  next.lCalf = res.calf;
+                 next.lLegStretch = res.stretch; // Store elastic stretch
                  if (isGrounded && Math.abs(pin.y - FLOOR_HEIGHT) < 10) {
                      const globalLeg = (next.rootRotation||0) + next.hips + res.thigh + res.calf;
                      next.lAnkle = -90 - globalLeg;
@@ -697,8 +703,8 @@ const App = () => {
              } else return { thigh: 0, calf: 0, ankle: 0, stretch: 0 };
         };
         const rr = solve(true, j.rHip); const lr = solve(false, j.lHip);
-        candidate.rThigh = rr.thigh; candidate.rCalf = rr.calf; candidate.rAnkle = rr.ankle;
-        candidate.lThigh = lr.thigh; candidate.lCalf = lr.calf; candidate.lAnkle = lr.ankle;
+        candidate.rThigh = rr.thigh; candidate.rCalf = rr.calf; candidate.rAnkle = rr.ankle; candidate.rLegStretch = rr.stretch;
+        candidate.lThigh = lr.thigh; candidate.lCalf = lr.calf; candidate.lAnkle = lr.ankle; candidate.lLegStretch = lr.stretch;
     }
     else {
         // === RIGID GROUNDING PIPELINE ===
@@ -781,7 +787,8 @@ const App = () => {
               // Or we pass the IK result directly to be safe.
               
               const r = solveTwoBoneIK(p.rootRotation||0, p.hips, isR?j.rHip:j.lHip, mouse, ANATOMY.LEG_UPPER, ANATOMY.LEG_LOWER, 1, tension);
-              if (isR) { updates.rThigh = r.thigh; updates.rCalf = r.calf; } else { updates.lThigh = r.thigh; updates.lCalf = r.calf; }
+              if (isR) { updates.rThigh = r.thigh; updates.rCalf = r.calf; updates.rLegStretch = r.stretch; } 
+              else { updates.lThigh = r.thigh; updates.lCalf = r.calf; updates.lLegStretch = r.stretch; }
           } else {
                // FK Drag (simplified)
                const solveFK = (piv: any, tip: any, curr: number) => {
@@ -866,11 +873,11 @@ const App = () => {
                 {debugVectors.length > 0 && <DebugOverlay vectors={debugVectors} />}
 
                 {/* SHADOW LAYER */}
-                {shadowMode && <CastShadow pose={displayPose} skew={shadowSkew} />}
+                {shadowMode && <CastShadow pose={displayPose} skew={shadowSkew} isGrounded={isGrounded} />}
 
                 {jumpMode && <JumpGhost pose={displayPose} jumpHeight={jumpHeight} />}
                 {ghostPose && <g opacity="0.4" style={{ pointerEvents: 'none' }}><Mannequin pose={ghostPose} showOverlay={false} /></g>}
-                <Mannequin pose={displayPose} showOverlay={overlayMode === 'on' || (overlayMode === 'auto' && isActivity)} visibility={visibility} focusMode={focusMode} wormMode={wormMode} hoveredPart={hoveredPart} selectedPart={selectedPart} pinnedJoints={pinnedJoints} />
+                <Mannequin pose={displayPose} showOverlay={overlayMode === 'on' || (overlayMode === 'auto' && isActivity)} visibility={visibility} focusMode={focusMode} wormMode={wormMode} hoveredPart={hoveredPart} selectedPart={selectedPart} pinnedJoints={pinnedJoints} isGrounded={isGrounded} />
                 {isGrounded && <ContactMarkers pose={displayPose} active={isGrounded} />}
             </svg>
             <div className="absolute bottom-4 left-4 font-mono text-ink opacity-60 pointer-events-none select-none z-20">

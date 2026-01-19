@@ -34,6 +34,10 @@ export interface Pose {
   rAnkle: number;
   // Toes removed
   
+  // Dynamic Stretch (Elasticity)
+  lLegStretch?: number;
+  rLegStretch?: number;
+  
   // Rule Breaker Engine: XYZ offsets for breaking kinematic chains
   offsets?: Record<string, { x: number; y: number }>;
 }
@@ -52,6 +56,7 @@ export interface BoneProps {
   corrective?: number; // Optional secondary rotation around the END of the bone
   length: number;
   width?: number;
+  stretch?: number; // Dynamic elasticity extension
   variant?: BoneVariant;
   rounded?: boolean;
   cutout?: number; // Depth of cutout at the end of the bone (for V-necks, etc.)

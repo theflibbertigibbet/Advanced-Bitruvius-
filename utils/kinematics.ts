@@ -19,10 +19,12 @@ export const interpolatePose = (poseA: Pose, poseB: Pose, t: number): Pose => {
   
   result.rootRotation = lerp(poseA.rootRotation || 0, poseB.rootRotation || 0, clampedT);
 
-  Object.keys(poseA).forEach((key) => {
+  // Iterate over unique keys from both poses to ensure new fields (like stretch) are captured
+  const keys = new Set([...Object.keys(poseA), ...Object.keys(poseB)]);
+  keys.forEach((key) => {
     if (key === 'root' || key === 'rootRotation' || key === 'offsets') return;
-    const valA = (poseA as any)[key];
-    const valB = (poseB as any)[key];
+    const valA = (poseA as any)[key] || 0;
+    const valB = (poseB as any)[key] || 0;
     if (typeof valA === 'number' && typeof valB === 'number') {
       result[key] = lerp(valA, valB, clampedT);
     }
@@ -174,13 +176,14 @@ export const getJointPositions = (pose: Pose) => {
         const thighAngle = isRight ? pose.rThigh : pose.lThigh;
         const calfAngle = isRight ? pose.rCalf : pose.lCalf;
         const ankleAngle = isRight ? pose.rAnkle : pose.lAnkle;
+        const stretch = isRight ? (pose.rLegStretch || 0) : (pose.lLegStretch || 0);
         
         const hipOffsetX = isRight ? ANATOMY.HIP_WIDTH/4 : -ANATOMY.HIP_WIDTH/4;
         const hipOffsetVec = rotateVec(hipOffsetX, 0, globalAnglePelvis);
         const hipJoint = addVec(pelvisEnd, hipOffsetVec);
         
         const angleThighGlobal = globalAnglePelvis + thighAngle;
-        const thighVec = rotateVec(0, ANATOMY.LEG_UPPER, angleThighGlobal);
+        const thighVec = rotateVec(0, ANATOMY.LEG_UPPER + stretch, angleThighGlobal);
         const kneeJoint = addVec(hipJoint, thighVec);
         
         const angleCalfGlobal = angleThighGlobal + calfAngle;
@@ -261,7 +264,25 @@ export const getJointPositions = (pose: Pose) => {
 
 export const resolveFinalGrounding = (pose: Pose, floorHeight: number, magnetism: number, sitMode: boolean = false, seatHeight: number = 0): Pose => {
     let finalPose = { ...pose };
-    const joints = getJointPositions(finalPose);
+    
+    // Create a calculation proxy that enforces visual grounding rules (Flat Feet)
+    // This ensures that the lowest-point detection matches the rendered "teathered" look
+    let calcPose = { ...finalPose };
+    if (!sitMode && magnetism > 0) {
+        const rootRot = finalPose.rootRotation || 0;
+        const hips = finalPose.hips || 0;
+        
+        // Counter-rotate feet to be world-horizontal for the height calculation
+        // Right Leg
+        const rGlobalLeg = rootRot + hips + (finalPose.rThigh || 0) + (finalPose.rCalf || 0);
+        calcPose.rAnkle = -rGlobalLeg;
+        
+        // Left Leg
+        const lGlobalLeg = rootRot + hips + (finalPose.lThigh || 0) + (finalPose.lCalf || 0);
+        calcPose.lAnkle = -lGlobalLeg;
+    }
+
+    const joints = getJointPositions(calcPose);
 
     if (sitMode) {
         const lowestHipY = Math.max(joints.lHip.y, joints.rHip.y);
@@ -273,7 +294,8 @@ export const resolveFinalGrounding = (pose: Pose, floorHeight: number, magnetism
         }
     }
 
-    const newJoints = getJointPositions(finalPose);
+    // Grounding Check with the "Flat Foot" proxy pose
+    const newJoints = getJointPositions(calcPose);
     const contactPoints = [newJoints.lFootTip.y, newJoints.rFootTip.y, newJoints.lAnkle.y, newJoints.rAnkle.y];
     const lowestPointY = Math.max(...contactPoints);
     const penetration = lowestPointY - floorHeight;
@@ -332,49 +354,51 @@ const legCorrection = (angle: number) => {
     return a;
 }
 
+// --- Refined IK Solver with Claude's Audited Math ---
 export const solveTwoBoneIK = (
-    rootRot: number,
-    hipsRot: number,
-    hipPos: {x: number, y: number},
-    targetAnkle: {x: number, y: number},
-    L1: number,
-    L2: number,
-    currentBendDir: number,
-    tension: number = 100
+  rootRot: number, 
+  hipsRot: number, 
+  hipPos: { x: number; y: number }, 
+  targetAnkle: { x: number; y: number }, 
+  L1: number, 
+  L2: number, 
+  currentBendDir: number, 
+  tension: number = 100
 ) => {
-    const dx = targetAnkle.x - hipPos.x;
-    const dy = targetAnkle.y - hipPos.y;
-    const dist = Math.sqrt(dx*dx + dy*dy);
-    const maxElasticity = 0.1; 
-    const elasticityFactor = (100 - tension) / 100; 
-    const allowedStretch = elasticityFactor * maxElasticity;
-    const naturalReach = L1 + L2;
-    const maxReach = naturalReach * (1 + Math.max(allowedStretch, 0.05)); 
-    const clampedDist = Math.min(dist, maxReach);
-    
-    let stretch = 0;
-    if (dist > naturalReach) {
-        stretch = Math.max(0, clampedDist - naturalReach);
-    }
-    
-    const reach = clampedDist;
-    const cosAlpha = (L1*L1 + reach*reach - L2*L2) / (2 * L1 * reach);
-    const alpha = Math.acos(Math.max(-1, Math.min(1, cosAlpha)));
-    
-    const vectorAngle = Math.atan2(dy, dx) - (Math.PI / 2);
-    const thighGlobalRad = vectorAngle - (alpha * currentBendDir);
-    
-    const cosC = (L1*L1 + L2*L2 - reach*reach) / (2 * L1 * L2);
-    const angleC = Math.acos(Math.max(-1, Math.min(1, cosC)));
-    const calfLocalRad = (Math.PI - angleC) * currentBendDir;
-    
-    const thighGlobalDeg = thighGlobalRad * 180 / Math.PI;
-    const calfLocalDeg = calfLocalRad * 180 / Math.PI;
-    const thighLocalDeg = thighGlobalDeg - rootRot - hipsRot;
-    
-    return {
-        thigh: thighLocalDeg,
-        calf: calfLocalDeg,
-        stretch 
-    };
+  const dx = targetAnkle.x - hipPos.x;
+  const dy = targetAnkle.y - hipPos.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+
+  // Math Audit 1: Tension/Elasticity Factor
+  const maxElasticity = 0.1;
+  const elasticityFactor = (100 - tension) / 100;
+  const allowedStretch = elasticityFactor * maxElasticity;
+  
+  const naturalReach = L1 + L2;
+  const maxReach = naturalReach * (1 + Math.max(allowedStretch, 0.01));
+  const clampedDist = Math.min(dist, maxReach);
+  
+  let stretch = 0;
+  if (dist > naturalReach) stretch = Math.max(0, clampedDist - naturalReach);
+  
+  // Math Audit 2: Law of Cosines with Clamp protection
+  const reach = clampedDist;
+  const cosAlpha = (L1 * L1 + reach * reach - L2 * L2) / (2 * L1 * reach);
+  const alpha = Math.acos(Math.max(-1, Math.min(1, cosAlpha)));
+  
+  const vectorAngle = Math.atan2(dy, dx) - (Math.PI / 2);
+  const thighGlobalRad = vectorAngle - (alpha * currentBendDir);
+  
+  const cosC = (L1 * L1 + L2 * L2 - reach * reach) / (2 * L1 * L2);
+  const angleC = Math.acos(Math.max(-1, Math.min(1, cosC)));
+  const calfLocalRad = (Math.PI - angleC) * currentBendDir;
+  
+  // Math Audit 3: Coordinate Space Conversion (Anterior Upright)
+  const thighGlobalDeg = thighGlobalRad * 180 / Math.PI;
+  const calfLocalDeg = calfLocalRad * 180 / Math.PI;
+  
+  // Normalize against Root and Hips to prevent logic drifting
+  const thighLocalDeg = thighGlobalDeg - rootRot - hipsRot;
+  
+  return { thigh: thighLocalDeg, calf: calfLocalDeg, stretch };
 };

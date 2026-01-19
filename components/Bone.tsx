@@ -75,6 +75,7 @@ export const Bone: React.FC<BoneProps> = ({
   corrective = 0,
   length, 
   width = 15, 
+  stretch = 0,
   variant = 'diamond',
   rounded = false,
   cutout = 0,
@@ -85,13 +86,16 @@ export const Bone: React.FC<BoneProps> = ({
   children 
 }) => {
   
+  // Calculate effective length including elastic stretch
+  const effectiveLength = length + stretch;
+  
   // --- PHASE 1: CORRECTIVE INJECTION ---
   // Apply the pivot shift logic to establish the dynamic Anchor.
   // When we apply 'corrective' (C), we rotate around the Distal point (0, L).
   // This shifts the Proximal point (0,0) to a new location.
   const rad = corrective * (Math.PI / 180);
-  const shiftX = length * Math.sin(rad);
-  const shiftY = length * (1 - Math.cos(rad));
+  const shiftX = effectiveLength * Math.sin(rad);
+  const shiftY = effectiveLength * (1 - Math.cos(rad));
   
   // --- PHASE 2: KINEMATIC ROTATION + RULE BREAKER OFFSET ---
   // Apply manual offsets (Rule Breaker) on top of algorithmic shifts
@@ -108,7 +112,7 @@ export const Bone: React.FC<BoneProps> = ({
       {visible && (
           <>
             <path 
-                d={getBonePath(length, width, variant as BoneVariant, cutout)} 
+                d={getBonePath(effectiveLength, width, variant as BoneVariant, cutout)} 
                 fill="currentColor" 
                 // Rounded Logic: Use stroke to soften corners if requested
                 stroke={rounded ? "currentColor" : "none"}
@@ -121,7 +125,7 @@ export const Bone: React.FC<BoneProps> = ({
             {showOverlay && (
                 <line 
                     x1={0} y1={0} 
-                    x2={0} y2={length} 
+                    x2={0} y2={effectiveLength} 
                     stroke="#a855f7" 
                     strokeWidth={2} 
                     opacity={0.9}
@@ -131,7 +135,7 @@ export const Bone: React.FC<BoneProps> = ({
             
             {/* Decorations Layer (Holes, Buttons, etc.) */}
             {decorations && decorations.map((d, i) => {
-                const y = length * d.position;
+                const y = effectiveLength * d.position;
                 const size = d.size || 7;
                 const r = size / 2;
                 const fill = d.type === 'hole' ? '#fdf6e3' : 'currentColor';
@@ -161,7 +165,7 @@ export const Bone: React.FC<BoneProps> = ({
          We neutralize 'corrective' so children are purely kinematic relative to the parent's base axis.
          Global Angle = (Rotation + Corrective) - Corrective = Rotation.
       */}
-      <g transform={`translate(0, ${length}) rotate(${-corrective})`}>
+      <g transform={`translate(0, ${effectiveLength}) rotate(${-corrective})`}>
         {children}
       </g>
 
