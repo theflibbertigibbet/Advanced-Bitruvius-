@@ -17,7 +17,8 @@ export const ANATOMY = {
   // Limbs - Elongated geometric look
   // Adjusted to 2.5 to match Height/Span ratio (13.5H Height vs ~13.8H Span)
   UPPER_ARM: 2.5 * HEAD_UNIT,
-  LOWER_ARM: 2.5 * HEAD_UNIT,
+  // SQ.7 UPDATE: Shortened forearm to fix visual elongation (2.5 -> 2.1)
+  LOWER_ARM: 2.1 * HEAD_UNIT,
   HAND: 0.8 * HEAD_UNIT,
   
   // Lower Body Growth: +1.5 Units Total (0.75 per segment)

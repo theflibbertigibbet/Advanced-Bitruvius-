@@ -18,7 +18,7 @@ interface ControlsProps {
   manualControl: boolean;
   setManualControl: (v: boolean) => void;
   
-  // Kinetics
+  // Kinetics (Moved to Timeline, kept in interface if needed by App, but removed from UI here)
   stancePinLeft: boolean;
   setStancePinLeft: (v: boolean) => void;
   stancePinRight: boolean;
@@ -48,7 +48,7 @@ interface ControlsProps {
   landingMode: LandingMode;
   setLandingMode: (v: LandingMode) => void;
 
-  // GLOBAL PHYSICS (Moved from Timeline)
+  // GLOBAL PHYSICS
   isGrounded: boolean;
   onToggleGrounded: () => void;
   gravity: boolean;
@@ -61,6 +61,12 @@ interface ControlsProps {
   setSeatHeight: (v: number) => void;
   tension: number;
   setTension: (v: number) => void;
+  
+  // Shadow System
+  shadowMode: boolean;
+  setShadowMode: (v: boolean) => void;
+  shadowSkew: boolean;
+  setShadowSkew: (v: boolean) => void;
 
   // AUDIT & CONFLICTS
   conflicts: Record<string, string>;
@@ -158,25 +164,17 @@ export const Controls: React.FC<ControlsProps> = ({
     isGrounded, onToggleGrounded, gravity, onToggleGravity, floorMagnetism, setFloorMagnetism, sitMode, setSitMode, seatHeight, setSeatHeight, tension, setTension,
     conflicts, auditMode, setAuditMode, tensionAlerts,
     systemErrors, onHoverControl,
-    balanceTargets, onToggleBalance
+    balanceTargets, onToggleBalance,
+    shadowMode, setShadowMode, shadowSkew, setShadowSkew
 }) => {
-  const [expanded, setExpanded] = useState<'refinement' | 'jump' | 'physics' | null>('refinement'); 
+  const [expanded, setExpanded] = useState<'jump' | 'physics' | null>('physics'); 
   
-  const bind = (key: keyof Pose) => ({ 
-      value: pose[key] as number, 
-      onChange: (v: number) => onChange({ [key]: v }),
-      onHover: (active: boolean) => onHoverControl(active ? key : null),
-      balanceKey: key,
-      isBalanced: balanceTargets.has(key),
-      onToggleBalance: onToggleBalance
-  });
-
   return (
     <div className="w-80 h-full bg-white/95 backdrop-blur-md border-l border-gray-200 shadow-xl p-4 select-none overflow-y-auto custom-scrollbar flex flex-col font-sans z-40">
       
       {/* HEADER */}
       <div className="flex justify-between items-center mb-6 pb-2 border-b border-gray-200 mt-2">
-          <span className="text-[10px] font-bold font-mono text-gray-900">REFINEMENT HUB</span>
+          <span className="text-[10px] font-bold font-mono text-gray-900">PHYSICS CONSOLE</span>
           <button 
             onClick={() => setManualControl(!manualControl)} 
             className={`px-3 py-1.5 text-[9px] font-bold font-mono border border-gray-900 rounded-sm transition-colors ${manualControl ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}
@@ -186,44 +184,7 @@ export const Controls: React.FC<ControlsProps> = ({
       </div>
 
       <div className="mb-2">
-        <SectionHeader title="1. JOINT DIALS" expanded={expanded === 'refinement'} onToggle={() => setExpanded(expanded === 'refinement' ? null : 'refinement')} />
-        {expanded === 'refinement' && (
-          <div className="px-1 animate-in fade-in">
-             <div className="mb-5">
-                 <div className="text-[9px] font-bold text-gray-400 mb-2">STANCE PINS</div>
-                 <div className="flex gap-2">
-                     <button onClick={() => setStancePinLeft(!stancePinLeft)} className={`flex-1 py-2 text-[9px] font-bold border rounded-sm transition-all hover:shadow-sm ${stancePinLeft ? 'bg-blue-50 border-blue-500 text-blue-800' : 'bg-white border-gray-300 text-gray-500 hover:border-gray-400'}`}>L_PIN</button>
-                     <button onClick={() => setStancePinRight(!stancePinRight)} className={`flex-1 py-2 text-[9px] font-bold border rounded-sm transition-all hover:shadow-sm ${stancePinRight ? 'bg-blue-50 border-blue-500 text-blue-800' : 'bg-white border-gray-300 text-gray-500 hover:border-gray-400'}`}>R_PIN</button>
-                 </div>
-             </div>
-             
-             <div className="mb-5">
-                 <div className="text-[9px] font-bold text-gray-400 mb-2">GLOBAL ROOT</div>
-                 <Slider label="ROOT_X" value={pose.root.x} min={-200} max={200} onChange={(v) => onChange({ root: { ...pose.root, x: v } })} onHover={(a) => onHoverControl(a ? 'root' : null)} compact />
-             </div>
-
-             <div className="mb-5">
-                 <div className="text-[9px] font-bold text-gray-400 mb-2">UPPER BODY</div>
-                 <Slider label="TORSO" min={0} max={360} {...bind('torso')} compact />
-                 <Slider label="NECK" min={-90} max={90} {...bind('neck')} compact />
-                 <Slider label="L_SHOULDER" min={-180} max={180} {...bind('lShoulder')} compact />
-                 <Slider label="R_SHOULDER" min={-180} max={180} {...bind('rShoulder')} compact />
-             </div>
-
-             <div className="mb-2">
-                 <div className="text-[9px] font-bold text-gray-400 mb-2">LOWER BODY</div>
-                 <Slider label="HIPS" min={-45} max={45} {...bind('hips')} compact />
-                 <Slider label="L_THIGH" min={-180} max={180} {...bind('lThigh')} compact />
-                 <Slider label="R_THIGH" min={-180} max={180} {...bind('rThigh')} compact />
-                 <Slider label="L_CALF" min={-180} max={180} {...bind('lCalf')} compact />
-                 <Slider label="R_CALF" min={-180} max={180} {...bind('rCalf')} compact />
-             </div>
-          </div>
-        )}
-      </div>
-
-      <div className="mb-2">
-         <SectionHeader title="2. DYNAMICS ENGINE" expanded={expanded === 'jump'} onToggle={() => setExpanded(expanded === 'jump' ? null : 'jump')} />
+         <SectionHeader title="DYNAMICS ENGINE" expanded={expanded === 'jump'} onToggle={() => setExpanded(expanded === 'jump' ? null : 'jump')} />
          {expanded === 'jump' && (
              <div className="px-1 animate-in fade-in">
                  <div className={`mb-4 border rounded-sm transition-all ${jumpMode ? 'border-orange-300 bg-orange-50/50' : 'border-gray-200 bg-gray-50/30'}`}>
@@ -268,7 +229,7 @@ export const Controls: React.FC<ControlsProps> = ({
       </div>
 
       <div className="mb-2">
-         <SectionHeader title="3. PHYSICS & AUDIT" expanded={expanded === 'physics'} onToggle={() => setExpanded(expanded === 'physics' ? null : 'physics')} />
+         <SectionHeader title="PHYSICS & AUDIT" expanded={expanded === 'physics'} onToggle={() => setExpanded(expanded === 'physics' ? null : 'physics')} />
          {expanded === 'physics' && (
              <div className="px-1 animate-in fade-in">
                  <div className="flex justify-between items-center mb-3">
@@ -285,6 +246,11 @@ export const Controls: React.FC<ControlsProps> = ({
                       <Toggle label="FLOOR" active={isGrounded} onClick={onToggleGrounded} conflictMsg={conflicts['FLOOR']} />
                       <Toggle label="GRAVITY" active={gravity} onClick={onToggleGravity} conflictMsg={conflicts['GRAVITY']} />
                       <Toggle label="SIT" active={sitMode} onClick={setSitMode} color="red" conflictMsg={conflicts['SIT']} />
+                  </div>
+                  
+                  <div className="flex gap-2 mb-4">
+                      <Toggle label="SHADOW" active={shadowMode} onClick={() => setShadowMode(!shadowMode)} />
+                      <Toggle label="SKEW" active={shadowSkew} onClick={() => setShadowSkew(!shadowSkew)} />
                   </div>
 
                   <Slider label="MAGNETISM" value={floorMagnetism} min={0} max={100} onChange={setFloorMagnetism} unit="%" />

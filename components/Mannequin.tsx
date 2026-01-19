@@ -14,6 +14,7 @@ interface MannequinProps {
   hoveredPart?: string | null;
   selectedPart?: string | null;
   pinnedJoints?: Map<string, {x: number, y: number}>;
+  className?: string; // New prop for styling (e.g. shadow color)
 }
 
 export const Mannequin: React.FC<MannequinProps> = ({ 
@@ -24,7 +25,8 @@ export const Mannequin: React.FC<MannequinProps> = ({
     wormMode = false,
     hoveredPart,
     selectedPart,
-    pinnedJoints
+    pinnedJoints,
+    className = "text-ink"
 }) => {
   // --- RIGGING CONSTANTS ---
   const shoulderInset = RIGGING.SHOULDER_INSET; 
@@ -100,7 +102,7 @@ export const Mannequin: React.FC<MannequinProps> = ({
 
   return (
     <g 
-      className="mannequin-root text-ink"
+      className={`mannequin-root ${className}`}
       transform={`translate(${pose.root.x}, ${pose.root.y}) rotate(${pose.rootRotation || 0})`}
     >
       {/* ================= UPPER BODY ================= */}
